@@ -1,55 +1,62 @@
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.losses import CategoricalCrossentropy
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
+import json
 import os
 
-# 💡 Path to dataset folder
+# Paths
 train_dir = "data/asl_alphabet_train/asl_alphabet_train"
-
-# 📏 Image and batch details
 img_size = (64, 64)
 batch_size = 32
 
-# 📸 Image augmentation with improvements
-train_datagen = ImageDataGenerator(
+# ImageDataGenerator
+datagen = ImageDataGenerator(
     rescale=1./255,
     validation_split=0.2,
-    shear_range=0.3,
-    zoom_range=0.3,
-    rotation_range=15,
-    brightness_range=[0.8, 1.2],
+    shear_range=0.2,
+    zoom_range=0.2,
     horizontal_flip=True
 )
 
-# 🚂 Training generator
-train_generator = train_datagen.flow_from_directory(
+train_generator = datagen.flow_from_directory(
     train_dir,
     target_size=img_size,
     batch_size=batch_size,
     class_mode='categorical',
-    subset='training'
+    subset='training',
+    shuffle=True
 )
 
-# 🧪 Validation generator
-val_generator = train_datagen.flow_from_directory(
+val_generator = datagen.flow_from_directory(
     train_dir,
     target_size=img_size,
     batch_size=batch_size,
     class_mode='categorical',
-    subset='validation'
+    subset='validation',
+    shuffle=False
 )
 
-# 🧠 Confirm class detection
-print("\n✅ Classes detected:", train_generator.class_indices)
+# Save class indices
+if not os.path.exists("model"):
+    os.makedirs("model")
 
-# 🧠 Model definition
+with open("model/labels.json", "w") as f:
+    json.dump(train_generator.class_indices, f)
+print("✅ Class indices saved.")
+
+# Model
 model = Sequential([
-    Conv2D(32, (3, 3), activation='relu', input_shape=(64, 64, 3)),
+    Conv2D(64, (3, 3), activation='relu', input_shape=(64, 64, 3)),
+    BatchNormalization(),
     MaxPooling2D(pool_size=(2, 2)),
 
-    Conv2D(64, (3, 3), activation='relu'),
+    Conv2D(128, (3, 3), activation='relu'),
+    BatchNormalization(),
+    MaxPooling2D(pool_size=(2, 2)),
+
+    Conv2D(256, (3, 3), activation='relu'),
+    BatchNormalization(),
     MaxPooling2D(pool_size=(2, 2)),
 
     Flatten(),
@@ -58,25 +65,23 @@ model = Sequential([
     Dense(train_generator.num_classes, activation='softmax')
 ])
 
-# 💥 Compile with label smoothing for better generalization
-loss_fn = CategoricalCrossentropy(label_smoothing=0.1)
-model.compile(optimizer='adam', loss=loss_fn, metrics=['accuracy'])
+# Compile
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
-# 💾 Model saving setup
-if not os.path.exists("model"):
-    os.makedirs("model")
-
+# Callbacks
 checkpoint = ModelCheckpoint("model/asl_cnn_best.h5", monitor='val_accuracy', save_best_only=True, verbose=1)
+early_stop = EarlyStopping(monitor='val_loss', patience=4, restore_best_weights=True)
+reduce_lr = ReduceLROnPlateau(monitor='val_loss', patience=2, factor=0.2, verbose=1)
 
-# 🚀 Train the model
+# Train
 history = model.fit(
     train_generator,
     validation_data=val_generator,
-    epochs=15,
-    callbacks=[checkpoint],
+    epochs=25,
+    callbacks=[checkpoint, early_stop, reduce_lr],
     verbose=1
 )
 
-# 🫶 Final model save
+# Save final model
 model.save("model/asl_cnn.h5")
-print("\n🎉 Final model saved as 'model/asl_cnn.h5'")
+print("🎯 Model saved as 'model/asl_cnn.h5'")
